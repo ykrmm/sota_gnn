@@ -1,1 +1,1 @@
-from .utils_functions import built_adjacency_matrix
+from .utils_functions import build_adjacency_matrix,build_biparti_graph,compute_laplacien
