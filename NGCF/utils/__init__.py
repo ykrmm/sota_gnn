@@ -1,1 +1,2 @@
 from .utils_functions import build_adjacency_matrix,build_biparti_graph,compute_laplacien
+from .datasets import Gowalla

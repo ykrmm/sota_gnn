@@ -2,5 +2,5 @@ jul/
 venv/
 *.pyc
 */__pycache__/
-
+*/*.pyc
 $.pt
