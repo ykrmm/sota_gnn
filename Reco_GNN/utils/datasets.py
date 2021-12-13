@@ -22,7 +22,7 @@ class Gowalla:
         if mode != 'train' and mode != 'val' and mode!='test':
             raise ValueError('mode must be train val or test')
         self.mode = mode
-
+        self._construct_variable()
 
     def load_file(self):
         with open(join(self.process_dir,self.mode+'.txt')) as f : 
@@ -47,19 +47,18 @@ class Gowalla:
             user = raw[0]
             items = raw[1:]
             R[user][items] = 1
-
-
-        
+ 
         return R
 
     def build_edge_index(self):
 
         self.load_file()
         N = len(self.lines_adj_list)
-        M = len(self.lines_items)
+        M = len(self.lines_items) - 1
         edge_u = []
         edge_v = []
-
+        self.users_id = torch.arange(N)
+        self.items_id = torch.arange(M) + N
         for l in self.lines_adj_list:
             raw = [int(i) for i in l.split()] # first element is the user id
             user = raw[0]
@@ -70,6 +69,7 @@ class Gowalla:
             edge_v.extend(items)
 
         self.edge_index = torch.Tensor([edge_u,edge_v]).long()
+
 
     def biparti_to_edge_index(self,R):
 
@@ -82,11 +82,7 @@ class Gowalla:
             for m in range(len(self.R[0])):
                 if R[n][m]==1:
                     edge_u.append(n)
-                    edge_v.append(m)
-
-        
-
-        
+                    edge_v.append(m)       
         edge_index = torch.Tensor([edge_u,edge_v]).long()
 
         return edge_index
@@ -94,16 +90,24 @@ class Gowalla:
 
     def get_edge_index(self):
 
-        self.build_edge_index()
-
         return self.edge_index
 
 
     def get_data(self):
 
-        self.build_edge_index
-        self.edge_index = to_undirected(self.edge_index) # undirected graph
-        data = Data(edge_index=self.edge_index)
-
-        return data
+        return self.data
+    
+    def get_users_id(self):
+        
+        return self.users_id
+    
+    def get_items_id(self):
+        
+        return self.items_id
+    
+    def _construct_variable(self):
+        self.build_edge_index()
+        self.direct_edge_index = self.edge_index
+        self.edge_index = to_undirected(self.edge_index) # undirected graph, will double size of the edge_index 
+        self.data = Data(edge_index=self.edge_index)
 

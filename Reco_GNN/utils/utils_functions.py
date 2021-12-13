@@ -2,6 +2,7 @@ import numpy as np
 from os.path import join
 from scipy.linalg import sqrtm
 import torch
+import argparse
 def build_biparti_graph(folder,mode='train'):
     """
         file: path to the file of adjacency list format like gowalla or amazon dataset
@@ -78,3 +79,25 @@ def compute_laplacien(folder,mode='train',save=True):
         print('saving successfully the laplacien matrix')
     return L
 
+
+
+def count_parameters(model):
+    """Count parameters of a model
+
+    Args:
+        model ([nn.Module]): The pytorch model
+
+    Returns:
+        [int]: Number of parameters in the model
+    """
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
