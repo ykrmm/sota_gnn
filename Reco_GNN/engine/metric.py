@@ -18,7 +18,9 @@ def ndcg_metric(relevance,gt_rank, K):
     Relevance is binary values. 
         Normalized discounted cumulative gain Binary case
     """
-    idcg = min(len(gt_rank),K)
+    relevance_gt = torch.zeros(K)
+    relevance_gt[:len(gt_rank)] = 1
+    idcg = dcg_at_k(relevance_gt,K)
 
     return dcg_at_k(relevance, K) / idcg
 

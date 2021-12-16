@@ -66,12 +66,19 @@ def main():
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.wd)
     for ep in range(args.epoch):
-        loss_train,ndcg,recall = train_one_epoch(model,optimizer,dataset_train,batch_size=args.batch_size,\
+        loss_train,ndcg_train,recall_train = train_one_epoch(model,optimizer,dataset_train,batch_size=args.batch_size,\
             lamb=args.lamb,K=args.K,mask_test= mask_test)
+        
+        writer.add_scalar("Loss/train", loss_train, ep)
+        writer.add_scalar("Ndcg/train", ndcg_train, ep)
+        writer.add_scalar("Recall/train", recall_train, ep)
         
         loss_test,ndcg_test,recall_test = eval_model(model,dataset_test,batch_size=args.batch_size,K=args.K,\
             mask_train=mask_train)
         
+        writer.add_scalar("Loss/test", loss_test, ep)
+        writer.add_scalar("Ndcg/test", ndcg_test, ep)
+        writer.add_scalar("Recall/test", recall_test, ep)
         
 if __name__ == '__main__':
     main()
