@@ -17,8 +17,8 @@ from torch_geometric.utils import add_self_loops, degree
 
 
 class Light_GCN_Layer(MessagePassing):
-    def __init__(self, in_channels, out_channels):
-        super().__init__(aggr='add')  # "Add" aggregation (Step 5).
+    def __init__(self, in_channels, out_channels,aggr='add'):
+        super().__init__(aggr=aggr)  # "Add" aggregation (Step 5).
         self.lin = torch.nn.Linear(in_channels, out_channels)
 
     def forward(self, x, edge_index):
@@ -45,7 +45,7 @@ class Light_GCN_Layer(MessagePassing):
 
 
 class LightGCN_pyg(nn.Module):
-    def __init__(self,N,emb_size=64,layer=3) -> None:
+    def __init__(self,N,emb_size=64,layer=3,aggr='add') -> None:
         """NGCF Model with pytorch geometric framework
 
         Args:
@@ -54,9 +54,9 @@ class LightGCN_pyg(nn.Module):
             layer (int, optional): Number of GCN Layer in the model. Defaults to 3.
         """
         super().__init__()
-        self.gc1 = Light_GCN_Layer(emb_size, emb_size)
-        self.gc2 = Light_GCN_Layer(emb_size, emb_size)
-        self.gc3 = Light_GCN_Layer(emb_size, emb_size)
+        self.gc1 = Light_GCN_Layer(emb_size, emb_size,aggr=aggr)
+        self.gc2 = Light_GCN_Layer(emb_size, emb_size,aggr=aggr)
+        self.gc3 = Light_GCN_Layer(emb_size, emb_size,aggr=aggr)
         self.dropout = nn.Dropout(p=0.1)
         self.l_relu = nn.LeakyReLU()
         self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
@@ -87,3 +87,15 @@ class LightGCN_pyg(nn.Module):
         EF = (a0* self.E) + (a1* self.E1) + (a2 * self.E2) + (a3 * self.E3)
         
         return EF
+
+    def compute_score(self,N):
+        """
+
+        Args:
+            N ([type]): Number of users
+            
+        """
+        users = self.EF[:N] # N first lines of the embeddings matrix are for the users
+        items = self.EF[N:] # The others are for the items
+        scores = users @ items.T # Inner product between all users and items
+        return scores

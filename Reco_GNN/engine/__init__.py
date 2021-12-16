@@ -1,2 +1,1 @@
-from .train import train_one_epoch
-from .eval import eval_model
+from .train_eval import train_one_epoch,eval_model

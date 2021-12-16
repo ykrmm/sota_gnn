@@ -13,6 +13,8 @@ import torch
 from torch_geometric.data import InMemoryDataset, download_url
 from torch_geometric.data import Data
 from torch_geometric.utils import to_undirected
+
+
 class Gowalla:
 
     def __init__(self,process_dir,mode='train'):
@@ -36,19 +38,19 @@ class Gowalla:
     def build_biparti_graph(self):
 
         self.load_file()
-        N = len(self.lines_adj_list)
-        M = len(self.lines_items)
+        self.N = len(self.lines_adj_list)
+        self.M = len(self.lines_items) - 1 
 
-        R = np.zeros((N,M)) # bipartie graph
+        self.R = torch.zeros((self.N,self.M)) # bipartie graph
 
         for l in self.lines_adj_list:
 
             raw = [int(i) for i in l.split()] # first element is the user id
             user = raw[0]
             items = raw[1:]
-            R[user][items] = 1
+            self.R[user][items] = 1
  
-        return R
+        return self.R
 
     def build_edge_index(self):
 
@@ -105,7 +107,16 @@ class Gowalla:
         
         return self.items_id
     
+    def get_mask(self):
+        """Use this function to mask all items that are in a set
+
+        Returns:
+            boolean Tensor
+        """
+        return self.R.bool()
+    
     def _construct_variable(self):
+        self.build_biparti_graph()
         self.build_edge_index()
         self.direct_edge_index = self.edge_index
         self.edge_index = to_undirected(self.edge_index) # undirected graph, will double size of the edge_index 

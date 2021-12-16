@@ -68,8 +68,8 @@ class NGCF(nn.Module):
 
 
 class NGCF_Layer(MessagePassing):
-    def __init__(self, in_channels, out_channels):
-        super().__init__(aggr='add')  # "Add" aggregation (Step 5).
+    def __init__(self, in_channels, out_channels,aggr='add'):
+        super().__init__(aggr=aggr)  # "Add" aggregation (Step 5).
         self.lin = torch.nn.Linear(in_channels, out_channels)
 
     def forward(self, x, edge_index):
@@ -101,18 +101,19 @@ class NGCF_Layer(MessagePassing):
 
 
 class NGCF_pyg(nn.Module):
-    def __init__(self,N,emb_size=64,layer=3) -> None:
+    def __init__(self,N,emb_size=64,aggr='add',layer=3) -> None:
         """NGCF Model with pytorch geometric framework
 
         Args:
             N ([int]): Number of nodes in bipartite graph
             emb_size (int, optional): Size of the embeddings. Defaults to 64.
             layer (int, optional): Number of GCN Layer in the model. Defaults to 3.
+            aggr (str,optional): Aggregation function in convolution layer 'add' 'mean' or 'max'
         """
         super().__init__()
-        self.gc1 = NGCF_Layer(emb_size, emb_size)
-        self.gc2 = NGCF_Layer(emb_size, emb_size)
-        self.gc3 = NGCF_Layer(emb_size, emb_size)
+        self.gc1 = NGCF_Layer(emb_size, emb_size,aggr=aggr)
+        self.gc2 = NGCF_Layer(emb_size, emb_size,aggr=aggr)
+        self.gc3 = NGCF_Layer(emb_size, emb_size,aggr=aggr)
         self.dropout = nn.Dropout(p=0.1)
         self.l_relu = nn.LeakyReLU()
         #self.E = nn.Embedding(N,emb_size)
@@ -130,8 +131,8 @@ class NGCF_pyg(nn.Module):
         self.E2 = self.dropout(self.E2)
         self.E3 = self.l_relu(self.gc3(self.E2,edge_index))
         self.E3 = F.normalize(self.E3, p=2, dim=1)
-        EF = self.fusion()
-        return EF
+        self.EF = self.fusion()
+        return self.EF
 
 
     def fusion(self):
@@ -142,3 +143,17 @@ class NGCF_pyg(nn.Module):
         EF = torch.cat((self.E,self.E1,self.E2,self.E3),1)
         
         return EF
+    
+    
+    def compute_score(self,n_users):
+        """
+
+        Args:
+            n_users ([type]): Number of users
+            
+        return the similarity scores between each users and items of size N*M
+        """
+        users = self.EF[:n_users] # N first lines of the embeddings matrix are for the users
+        items = self.EF[n_users:] # The others are for the items
+        scores = users @ items.T # Inner product between all users and items
+        return scores
