@@ -9,8 +9,8 @@ from sklearn.metrics import ndcg_score
 
 def dcg_at_k(r, k):
     
-    
-	return r[0] + torch.sum(r[1:] / torch.log2(torch.arange(2, k + 1)))
+    return torch.sum(r / torch.log2(torch.arange(2, k + 2)))
+
 	
 
 def ndcg_metric(relevance,gt_rank, K):

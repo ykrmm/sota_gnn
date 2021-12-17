@@ -6,10 +6,11 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from argparse import ArgumentParser
 from torch.utils.tensorboard import SummaryWriter
-
+from prettytable import PrettyTable
 from model import NGCF_pyg,LightGCN_pyg
 from utils import compute_laplacien,str2bool,Gowalla
 from engine import train_one_epoch,eval_model
+from time import time
 data_path =  '/home/yannis/Documents/Recherche/Thèse/code/graph_datasets/gowalla'
 data_path = '/Users/ykarmim/Documents/Recherche/Thèse/Code/graph_datasets/gowalla'
 
@@ -66,19 +67,30 @@ def main():
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.wd)
     for ep in range(args.epoch):
+        train_s_t = time()
         loss_train,ndcg_train,recall_train = train_one_epoch(model,optimizer,dataset_train,batch_size=args.batch_size,\
             lamb=args.lamb,K=args.K,mask_test= mask_test)
+        
+        train_e_t = time()
         
         writer.add_scalar("Loss/train", loss_train, ep)
         writer.add_scalar("Ndcg/train", ndcg_train, ep)
         writer.add_scalar("Recall/train", recall_train, ep)
         
-        loss_test,ndcg_test,recall_test = eval_model(model,dataset_test,batch_size=args.batch_size,K=args.K,\
-            mask_train=mask_train)
-        
-        writer.add_scalar("Loss/test", loss_test, ep)
-        writer.add_scalar("Ndcg/test", ndcg_test, ep)
-        writer.add_scalar("Recall/test", recall_test, ep)
+        if ep%5 == 0:
+            train_res = PrettyTable()
+            train_res.field_names = ["Epoch", "training time(s)", "Loss train", "Recall train", "Ndcg train",\
+                'Loss test', 'Recall Test', 'Ndcg test']
+            
+            loss_test,ndcg_test,recall_test = eval_model(model,dataset_test,batch_size=args.batch_size,K=args.K,\
+                mask_train=mask_train)
+            train_res.add_row(
+                    [ep, train_e_t - train_s_t, loss_train, recall_train, ndcg_train, loss_test,
+                     recall_test, ndcg_test])
+            print(train_res)
+            writer.add_scalar("Loss/test", loss_test, ep)
+            writer.add_scalar("Ndcg/test", ndcg_test, ep)
+            writer.add_scalar("Recall/test", recall_test, ep)
         
 if __name__ == '__main__':
     main()
