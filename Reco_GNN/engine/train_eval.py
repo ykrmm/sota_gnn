@@ -28,8 +28,6 @@ def train_one_epoch(model,optimizer,dataset,batch_size,lamb=0.01,K=20):
     optimizer.zero_grad()
     output = model(dataset.edge_index)
     sample = pyg.utils.structured_negative_sampling(dataset.direct_edge_index)
-    ndcg_list = []
-    recall_list = []
     loss_list = []
     
     for users,pos,neg in batch(sample, n=batch_size):
@@ -53,13 +51,13 @@ def train_one_epoch(model,optimizer,dataset,batch_size,lamb=0.01,K=20):
             loss = - (pos_sim - neg_sim).sigmoid().log().mean() + lamb*(torch.norm(model.E,p=2)) # BPR Loss for LightGCN
         #print(loss)
         loss_list.append(loss.item())
-        #loss.backward()
+        loss.backward()
         
     
-    return np.array(loss_list).mean(),np.array(ndcg_list).mean(),np.array(recall_list).mean()
+    return np.array(loss_list).mean()
 
 
-def eval_model(model,dataset,batch_size,K=20,lamb=0.01,mask_train=None):
+def eval_model(model,dataset,batch_size,K=20,lamb=0.01,mask=None):
     """[summary]
 
     Args:
@@ -75,11 +73,9 @@ def eval_model(model,dataset,batch_size,K=20,lamb=0.01,mask_train=None):
     n_users = len(dataset.users_id)
     with torch.no_grad():
         scores = model.compute_score(n_users)
-        scores[mask_train] = -1000 # Give a negative score to items in train set, so we'll not recommand items in train set.
+        scores[mask] = -1000 # Give a negative score to items in train set, so we'll not recommand items in train set.
         
-        ndcg,recall = compute_metrics(scores,K,dataset)
-        print('score et metrics récupéré avec succey')
-        
+        ndcg,recall = compute_metrics(scores,K,dataset)       
         sample = pyg.utils.structured_negative_sampling(dataset.direct_edge_index)
         output = model.EF
         loss_list = []
