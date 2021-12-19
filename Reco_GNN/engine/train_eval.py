@@ -20,39 +20,30 @@ def train_one_epoch(model,optimizer,dataset,batch_size,lamb=0.01,K=20):
     Returns:
         [tuple]: tuple containing the mean loss,ndcg and recall value. 
         
-        
-    Peut y avoir des problèmes pcq je fais d'abord une output sur tout mes embeddings, ensuite je calcul par batch 
-    les similarités entre emb user et emb items. 
     """
     model.train()
-    optimizer.zero_grad()
-    output = model(dataset.edge_index)
+    
+    
     sample = pyg.utils.structured_negative_sampling(dataset.direct_edge_index)
     loss_list = []
     
-    for users,pos,neg in batch(sample, n=batch_size):
+    for b in batch(sample, n=batch_size):
+        # meme si les samples sont triés, un utilisateur peut être dans plusieurs batchs, je ne sais pas 
+        # à quel point c problématique. 
+        optimizer.zero_grad()
         
-        users_emb = itemgetter(*users)(output) # Get the users embeddings according to index in the sample
-        users_emb = torch.stack(users_emb,dim=0) 
-        
-        pos_emb = itemgetter(*pos)(output)
-        pos_emb = torch.stack(pos_emb,dim=0)
-        
-        neg_emb = itemgetter(*neg)(output)
-        neg_emb = torch.stack(neg_emb,dim=0)
-        
-        pos_sim = (users_emb * pos_emb).sum(dim=-1) # Compute batch of similarity between users and positive items
-        neg_sim = (users_emb * neg_emb).sum(dim=-1) # Compute batch of similarity between users and negative items
+        pos_sim,neg_sim = model(b)
         try:
-            loss = - (pos_sim - neg_sim).sigmoid().log().mean() + lamb*(torch.norm(model.E,p=2) + torch.norm(model.gc1.lin.weight,p=2)\
-            + torch.norm(model.gc2.lin.weight,p=2) + torch.norm(model.gc3.lin.weight,p=2)) # BPR Loss
+            loss = - (pos_sim - neg_sim).sigmoid().log().mean() + lamb*(torch.norm(model.E.copy(),p=2) + \
+                torch.norm(model.gc1.lin.weight.copy(),p=2)\
+            + torch.norm(model.gc2.lin.weight.copy(),p=2) + torch.norm(model.gc3.lin.weight.copy(),p=2)) # BPR Loss mean over the batch
             
         except:
-            loss = - (pos_sim - neg_sim).sigmoid().log().mean() + lamb*(torch.norm(model.E,p=2)) # BPR Loss for LightGCN
+            loss = - (pos_sim - neg_sim).sigmoid().log().mean() + lamb*(torch.norm(model.E.copy(),p=2)) # BPR Loss for LightGCN
         #print(loss)
         loss_list.append(loss.item())
         loss.backward()
-        
+        optimizer.step()
     
     return np.array(loss_list).mean()
 

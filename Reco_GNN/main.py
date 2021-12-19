@@ -7,7 +7,7 @@ from torch_geometric.loader import DataLoader
 from argparse import ArgumentParser
 from torch.utils.tensorboard import SummaryWriter
 from prettytable import PrettyTable
-from model import NGCF_pyg,LightGCN_pyg
+from model import NGCF_pyg,LightGCN_pyg,NGCF
 from utils import compute_laplacien,str2bool,Gowalla
 from engine import train_one_epoch,eval_model
 from time import time
@@ -48,27 +48,28 @@ def main():
     device = torch.device("cuda:"+str(args.gpu) if torch.cuda.is_available() else "cpu")
     print("device used:",device)
     
-    dataset_train = Gowalla(data_path,mode='train')
-    dataset_test = Gowalla(data_path,mode='test')
+    dataset_train = Gowalla(args.data_path,mode='train')
+    dataset_test = Gowalla(args.data_path,mode='test')
 
     mask_train = dataset_train.get_mask()
     mask_test = dataset_test.get_mask()
     print('same number of nodes across mode?',dataset_train.data.num_nodes==dataset_test.data.num_nodes)
     writer = SummaryWriter()
     if args.model == 'NGCF':
-        model = NGCF_pyg(dataset_train.data.num_nodes,emb_size=args.emb_size,aggr=args.aggr)
+        model = NGCF(dataset_train.data.num_nodes,emb_size=args.emb_size,aggr=args.aggr,device=device)
         
     elif args.model.upper() == 'LGCN':
-        model = LightGCN_pyg(dataset_train.data.num_nodes,emb_size=args.emb_size,aggr=args.aggr)
+        model = LightGCN_pyg(dataset_train.data.num_nodes,emb_size=args.emb_size,aggr=args.aggr,device=device)
         
     else: 
         raise ValueError("Model must be 'NGCF' or 'LGC'")
 
-    
+    model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.wd)
     for ep in range(args.epoch):
+        print(ep)
         train_s_t = time()
-        loss_train = train_one_epoch(model,optimizer,dataset_train,batch_size=args.batch_size,\
+        loss_train = train_one_epoch(model,device,optimizer,dataset_train,batch_size=args.batch_size,\
             lamb=args.lamb,K=args.K,mask_test= mask_test)
         
         train_e_t = time()
