@@ -89,7 +89,13 @@ class Gowalla:
 
         return edge_index
 
-
+    def shuffle(self):
+        """
+            Shuffle the edge_index
+        """
+        np.random.shuffle(self.direct_edge_index.T.numpy()) # Shuffle in column axis
+        self.edge_index = to_undirected(self.direct_edge_index)
+        
     def get_edge_index(self):
 
         return self.edge_index

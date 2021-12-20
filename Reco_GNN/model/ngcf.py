@@ -113,14 +113,14 @@ class NGCF_pyg(nn.Module):
     
     
 class NGCF(nn.Module):
-    def __init__(self,N,emb_size=64,aggr='add',device='cpu') -> None:
+    def __init__(self,N,emb_size=64,aggr='add',pool='concat',device='cpu') -> None:
         """NGCF Model with pytorch geometric framework
 
         Args:
             N ([int]): Number of nodes in bipartite graph ( Warning it's # users + items ! )
             emb_size (int, optional): Size of the embeddings. Defaults to 64.
-            layer (int, optional): Number of GCN Layer in the model. Defaults to 3.
-            aggr (str,optional): Aggregation function in convolution layer 'add' 'mean' or 'max'
+            aggr (str,optional): Aggregation function in convolution layer. 'add' 'mean' or 'max'
+            pool (str,optional): Pooling mode for final representation. 'concat' 'mean' or 'sum'
         """
         super().__init__()
         self.gc1 = GCNConv(emb_size, emb_size)
@@ -131,6 +131,7 @@ class NGCF(nn.Module):
         
         self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
         self.device = device
+        self.pool = pool
     
     def forward(self,batch):
         """Generate embeddings for a batch of users and items.
@@ -149,13 +150,13 @@ class NGCF(nn.Module):
         """
         users,pos,neg = batch
         
-        users.to(self.device)
-        pos.to(self.device)
-        neg.to(self.device)
+        users = users.to(self.device)
+        pos = pos.to(self.device)
+        neg = neg.to(self.device)
         
         edge_index_direct = torch.stack((users,pos)) # Real connections in graph
         
-        edge_index = to_undirected(edge_index_direct) # Propagate msg for users AND items 
+        edge_index = to_undirected(edge_index_direct).to(self.device) # Propagate msg for users AND items 
         
         self.e1 = self.l_relu(self.gc1(self.E,edge_index))
         self.e1 = F.normalize(self.e1, p=2, dim=1)
@@ -166,16 +167,11 @@ class NGCF(nn.Module):
         self.e3 = self.l_relu(self.gc3(self.e2,edge_index))
         self.e3 = F.normalize(self.e3, p=2, dim=1) # Not sure if i have to normalize here
         
-        self.ef = self._fusion() # Final representation is the concatenation of rpz of all layers
+        self.ef = self._pooling() # Final representation is the concatenation of rpz of all layers
         
-        users_emb = itemgetter(*users)(self.ef) # Get the users embeddings according to index in the sample
-        users_emb = torch.stack(users_emb,dim=0) 
-        
-        pos_emb = itemgetter(*pos)(self.ef)
-        pos_emb = torch.stack(pos_emb,dim=0)
-        
-        neg_emb = itemgetter(*neg)(self.ef)
-        neg_emb = torch.stack(neg_emb,dim=0)
+        users_emb = self.ef[users]
+        pos_emb = self.ef[pos]
+        neg_emb = self.ef[neg]
         
         pos_sim = (users_emb * pos_emb).sum(dim=-1) # Compute batch of similarity between users and positive items
         neg_sim = (users_emb * neg_emb).sum(dim=-1) # Compute batch of similarity between users and negative items
@@ -183,13 +179,19 @@ class NGCF(nn.Module):
         return pos_sim,neg_sim
         
         
-    def _fusion(self):
+    def _pooling(self):
         """
-            Concatenation of representations at each layers
+            Pooling of representations at each layers with mode
+            mode (str): 'concat', 'sum' or 'mean'
         """
-        
-        ef = torch.cat((self.E,self.e1,self.e2,self.e3),1)
-        
+        if self.pool =='concat':
+            ef = torch.cat((self.E,self.e1,self.e2,self.e3),1)
+            
+        if self.pool =='mean':
+            ef = torch.mean(torch.stack((self.E,self.e1,self.e2,self.e3)),dim=0,keepdim=True)
+            
+        elif self.pool =='sum':
+            ef = self.E + self.e1 + self.e2 + self.e3 
         return ef
     
     def compute_score(self,n_users):
