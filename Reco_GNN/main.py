@@ -2,16 +2,14 @@ from os import write
 import numpy as np 
 from os.path import join
 import torch
-import torch_geometric as pyg
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
 from argparse import ArgumentParser
 from torch.utils.tensorboard import SummaryWriter
 from prettytable import PrettyTable
-from model import NGCF_pyg,LightGCN_pyg,NGCF
-from utils import compute_laplacien,str2bool,Gowalla
+from model import LightGCN_pyg,NGCF,BPR_MF
+from utils import str2bool,Gowalla
 from engine import train_one_epoch,eval_model
 from time import time
+import os
 data_path =  '/home/yannis/Documents/Recherche/Thèse/code/graph_datasets/gowalla'
 data_path = '/Users/ykarmim/Documents/Recherche/Thèse/Code/graph_datasets/gowalla'
 
@@ -20,7 +18,7 @@ data_path = '/Users/ykarmim/Documents/Recherche/Thèse/Code/graph_datasets/gowal
 def main():
     parser = ArgumentParser()
     # Model 
-    parser.add_argument('--model', type=str, default='NGCF')
+    parser.add_argument('--model', type=str, default='NGCF',help="Model is 'NGCF' 'LGCN' or 'MF' ")
     
     
     # Training
@@ -31,8 +29,10 @@ def main():
     parser.add_argument('--moment', type=float, default=0.9)
     parser.add_argument('--batch_size', default=1000, type=int)
     parser.add_argument('--epoch', default=100, type=int)
+    parser.add_argument('--n_neg', default=1, type=int,default="Number of negative example")
     parser.add_argument('--shuffle', default=False, type=str2bool,help="Shuffle the edge index")
-     
+    parser.add_argument('--pretrain', default=False, type=str2bool,help="Use pretrain embeddings with MF")
+    parser.add_argument('--negative_slope', type=float, default=0.01)
     # Model 
     
     parser.add_argument('--aggr',default='add',type=str,help="Type of aggregation function.'add','max' or 'mean' ")
@@ -44,6 +44,10 @@ def main():
     # Dataset and device
     parser.add_argument('--data_path',type=str,default='/Users/ykarmim/Documents/Recherche/Thèse/Code/graph_datasets/gowalla')
     parser.add_argument('--gpu', default=0, type=int,help="Wich gpu to select for training")
+    
+    # Saving 
+    parser.add_argument('--log_dir',type=str,default=None,help="Log dir tensorboard")
+    parser.add_argument('--save_path',type=str,default=None,help="If not none, model will be save in save_path")
     args = parser.parse_args()
     
     print('PARAMETERS')
@@ -58,31 +62,32 @@ def main():
     mask_train = dataset_train.get_mask()
     mask_test = dataset_test.get_mask()
     print('same number of nodes across mode?',dataset_train.data.num_nodes==dataset_test.data.num_nodes)
-    writer = SummaryWriter()
+    
+                    
     
     
-    if args.model == 'NGCF':
-        model = NGCF(dataset_train.data.num_nodes,emb_size=args.emb_size,aggr=args.aggr,pool=args.pool,device=device)
+    if args.model.upper() == 'NGCF':
+        model = NGCF(dataset_train.data.num_nodes,args,device=device)
         
     elif args.model.upper() == 'LGCN':
-        model = LightGCN_pyg(dataset_train.data.num_nodes,emb_size=args.emb_size,aggr=args.aggr,device=device)
+        model = LightGCN_pyg(dataset_train.data.num_nodes,args,device=device)
+        
+        
+    elif args.model.upper() == 'MF':
+        model = BPR_MF(dataset_train.data.num_nodes,args,device=device)
         
     else: 
         raise ValueError("Model must be 'NGCF' or 'LGC'")
 
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.wd)
-   
-   
-   
-   
-   # TRAINING 
-   
-   
+                    
+            
+            
     ndcg_max = -1
     recall_max = -1
     loss_min = 100
-    
+    writer = SummaryWriter(log_dir=args.log_dir)
     
     for ep in range(args.epoch):
         print('EPOCH',ep)
@@ -126,7 +131,8 @@ def main():
     # Keep track of the hyper_parameters     
     writer.add_hparams(
     {"lr": args.learning_rate, "batch_size": args.batch_size, "shuffle":args.shuffle,\
-        "wd":args.wd,"pool":args.pool,"emb_size":args.emb_size},
+        "wd":args.wd,"pool":args.pool,"emb_size":args.emb_size,"pretrain":args.pretrain,\
+            "negative_slope":args.negative_slope,"n_neg":args.n_neg},
     {
         "Ndcg": ndcg_max,
         "Recall": recall_max,
@@ -135,5 +141,12 @@ def main():
     )
     writer.close()
     
+    if args.model.upper() == 'MF':
+        print('Saving pretrain embeddings...')
+        torch.save(model.E,'embeddings/pretrain_emb.pt')
+        print('Embeddings matrix successfully save')
+        
+    if args.save_path is not None:
+        torch.save(model,args.save_path)
 if __name__ == '__main__':
     main()

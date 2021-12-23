@@ -1,11 +1,11 @@
 
 import torch_geometric as pyg
 import torch
-from operator import itemgetter
 import numpy as np
 
 from .metric import compute_metrics
 from .utils_engine import batch
+from .sampling import structured_bipartite_negative_sampling
 
 def train_one_epoch(model,optimizer,dataset,batch_size):
     """Compute one epoch of model training
@@ -24,7 +24,7 @@ def train_one_epoch(model,optimizer,dataset,batch_size):
     model.train()
     
     
-    sample = pyg.utils.structured_negative_sampling(dataset.direct_edge_index)
+    sample = structured_bipartite_negative_sampling(dataset.direct_edge_index,n_users=dataset.N,num_nodes=dataset.data.num_nodes,contains_neg_self_loops=False)
     loss_list = []
     
     for b in batch(sample, n=batch_size):

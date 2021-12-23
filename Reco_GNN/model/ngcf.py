@@ -113,25 +113,39 @@ class NGCF_pyg(nn.Module):
     
     
 class NGCF(nn.Module):
-    def __init__(self,N,emb_size=64,aggr='add',pool='concat',device='cpu') -> None:
+    def __init__(self,N,args,device) -> None:
         """NGCF Model with pytorch geometric framework
 
         Args:
             N ([int]): Number of nodes in bipartite graph ( Warning it's # users + items ! )
-            emb_size (int, optional): Size of the embeddings. Defaults to 64.
-            aggr (str,optional): Aggregation function in convolution layer. 'add' 'mean' or 'max'
-            pool (str,optional): Pooling mode for final representation. 'concat' 'mean' or 'sum'
+            args:
+            - emb_size (int, optional): Size of the embeddings. Defaults to 64.
+            - aggr (str,optional): Aggregation function in convolution layer. 'add' 'mean' or 'max'
+            - pool (str,optional): Pooling mode for final representation. 'concat' 'mean' or 'sum'
+            - negative_slope (float): negative slope for the leakyRelu
+            - pretrain (bool): Use the pretrain embeddings matrix
+            
         """
         super().__init__()
+        emb_size = args.emb_size
+        
         self.gc1 = GCNConv(emb_size, emb_size)
-        self.gc2 = GCNConv(emb_size, emb_size)
+        self.gc2 = GCNConv(emb_size, emb_size) # ATTENTION on ajoute des self loops dans les couches de convolutions.
         self.gc3 = GCNConv(emb_size, emb_size)
         self.dropout = nn.Dropout(p=0.1,inplace=False)
-        self.l_relu = nn.LeakyReLU(inplace=False)
-        
-        self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
+        self.l_relu = nn.LeakyReLU(inplace=False,negative_slope=args.negative_slope)
+        if args.pretrain:
+            try:
+                self.E = torch.load('embeddings/pretrain_emb.pt')
+                print('sucess to load pretrain embeddings')
+            except : 
+                print('no pretrain embeddings found')
+                raise NameError('Didnt find the pretrain embeddings')
+                
+        else:
+            self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
         self.device = device
-        self.pool = pool
+        self.pool = args.pool
     
     def forward(self,batch):
         """Generate embeddings for a batch of users and items.
@@ -158,16 +172,16 @@ class NGCF(nn.Module):
         
         edge_index = to_undirected(edge_index_direct).to(self.device) # Propagate msg for users AND items 
         
-        self.e1 = self.l_relu(self.gc1(self.E,edge_index))
-        self.e1 = F.normalize(self.e1, p=2, dim=1)
-        self.e1 = self.dropout(self.e1)
-        self.e2 = self.l_relu(self.gc2(self.e1,edge_index))
-        self.e2 = F.normalize(self.e2, p=2, dim=1)
-        self.e2 = self.dropout(self.e2)
-        self.e3 = self.l_relu(self.gc3(self.e2,edge_index))
-        self.e3 = F.normalize(self.e3, p=2, dim=1) # Not sure if i have to normalize here
+        e1 = self.l_relu(self.gc1(self.E,edge_index))
+        e1 = F.normalize(e1, p=2, dim=1)
+        e1 = self.dropout(e1)
+        e2 = self.l_relu(self.gc2(e1,edge_index))
+        e2 = F.normalize(e2, p=2, dim=1)
+        e2 = self.dropout(e2)
+        e3 = self.l_relu(self.gc3(e2,edge_index))
+        e3 = F.normalize(e3, p=2, dim=1) # Not sure if i have to normalize here
         
-        self.ef = self._pooling() # Final representation is the concatenation of rpz of all layers
+        self.ef = self._pooling((self.E,e1,e2,e3)) # Final representation is the concatenation of rpz of all layers
         
         users_emb = self.ef[users]
         pos_emb = self.ef[pos]
@@ -179,19 +193,22 @@ class NGCF(nn.Module):
         return pos_sim,neg_sim
         
         
-    def _pooling(self):
+    def _pooling(self,emb_tuple):
         """
+
             Pooling of representations at each layers with mode
             mode (str): 'concat', 'sum' or 'mean'
         """
         if self.pool =='concat':
-            ef = torch.cat((self.E,self.e1,self.e2,self.e3),1)
+            ef = torch.cat(emb_tuple,1)
             
         if self.pool =='mean':
-            ef = torch.mean(torch.stack((self.E,self.e1,self.e2,self.e3)),dim=0,keepdim=True)
+            ef = torch.mean(torch.stack(emb_tuple),dim=0,keepdim=True)
             
         elif self.pool =='sum':
-            ef = self.E + self.e1 + self.e2 + self.e3 
+            ef = emb_tuple[0]
+            for e in emb_tuple[1:]:
+                ef += e 
         return ef
     
     def compute_score(self,n_users):
