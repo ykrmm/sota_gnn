@@ -19,101 +19,52 @@ from torch_geometric.utils import to_undirected
 
 
 class NGCF_Layer(MessagePassing):
-    def __init__(self, in_channels, out_channels,aggr='add'):
+    def __init__(self, in_channels, out_channels,aggr='add',bias=False):
         super().__init__(aggr=aggr)  # "Add" aggregation (Step 5).
-        self.lin = torch.nn.Linear(in_channels, out_channels)
-
-    def forward(self, x, edge_index):
+        self.lin1 = torch.nn.Linear(in_channels, out_channels,bias=bias) # No bias in NGCF
+        self.lin2 = torch.nn.Linear(in_channels, out_channels,bias=bias) # No bias in NGCF
+    def forward(self, emb, edge_index):
         # x has shape [N, in_channels]
         # edge_index has shape [2, E]
 
         # Step 1: Add self-loops to the adjacency matrix.
-        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+        edge_index_sl, _ = add_self_loops(edge_index, num_nodes=emb.size(0))
 
         # Step 2: Linearly transform node feature matrix.
-        x = self.lin(x)
+        x1 = self.lin1(emb) # First weight matrix
+        x2 = self.lin2(emb) # Second weight matrix
 
         # Step 3: Compute normalization.
         row, col = edge_index
-        deg = degree(col, x.size(0), dtype=x.dtype)
+        deg = degree(col, emb.size(0), dtype=emb.dtype)
         deg_inv_sqrt = deg.pow(-0.5)
         deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
-        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+        norm1 = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+        
+        row, col = edge_index_sl
+        deg = degree(col, emb.size(0), dtype=emb.dtype)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
+        norm2 = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
         # Step 4-5: Start propagating messages.
-        return self.propagate(edge_index, x=x, norm=norm)
+        return self.propagate(edge_index_sl, emb=emb,x1=x1,x2=x2, norm1=norm1,norm2=norm2)
 
-    def message(self, x_j, norm):
+    def message(self, emb,x1,x2, norm1,norm2):
         # x_j has shape [E, out_channels]
 
         # Step 4: Normalize node features.
-        return norm.view(-1, 1) * x_j
+        print(emb.shape,x1.shape,x2.shape,norm1.shape,norm2.shape)
+        e =( norm2.view(-1,1) * x1) + (norm1.view(-1,1)* emb * x2) 
+        return e
 
 
 
-class NGCF_pyg(nn.Module):
-    def __init__(self,N,emb_size=64,aggr='add',layer=3) -> None:
-        """NGCF Model with pytorch geometric framework
-
-        Args:
-            N ([int]): Number of nodes in bipartite graph
-            emb_size (int, optional): Size of the embeddings. Defaults to 64.
-            layer (int, optional): Number of GCN Layer in the model. Defaults to 3.
-            aggr (str,optional): Aggregation function in convolution layer 'add' 'mean' or 'max'
-        """
-        super().__init__()
-        self.gc1 = NGCF_Layer(emb_size, emb_size,aggr=aggr)
-        self.gc2 = NGCF_Layer(emb_size, emb_size,aggr=aggr)
-        self.gc3 = NGCF_Layer(emb_size, emb_size,aggr=aggr)
-        self.dropout = nn.Dropout(p=0.1,inplace=False)
-        self.l_relu = nn.LeakyReLU()
-        #self.E = nn.Embedding(N,emb_size)
-        
-        self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
-    
-    def forward(self,edge_index):
-        
-        
-        self.E1 = self.l_relu(self.gc1(self.E,edge_index))
-        self.E1 = F.normalize(self.E1, p=2, dim=1)
-        self.E1 = self.dropout(self.E1)
-        self.E2 = self.l_relu(self.gc2(self.E1,edge_index))
-        self.E2 = F.normalize(self.E2, p=2, dim=1)
-        self.E2 = self.dropout(self.E2)
-        self.E3 = self.l_relu(self.gc3(self.E2,edge_index))
-        self.E3 = F.normalize(self.E3, p=2, dim=1)
-        self.EF = self.fusion()
-        return self.EF
-
-
-    def fusion(self):
-        """
-        Concatenate all the embeddings for the final representation
-        """
-        
-        EF = torch.cat((self.E,self.E1,self.E2,self.E3),1)
-        
-        return EF
-    
-    
-    def compute_score(self,n_users):
-        """
-
-        Args:
-            n_users ([type]): Number of users
-            
-        return the similarity scores between each users and items of size N*M
-        """
-        users = self.EF[:n_users] # N first lines of the embeddings matrix are for the users
-        items = self.EF[n_users:] # The others are for the items
-        scores = users @ items.T # Inner product between all users and items
-        return scores
-    
     
     
     
 class NGCF(nn.Module):
-    def __init__(self,N,args,device) -> None:
+    def __init__(self,N,args,device='cpu') -> None:
         """NGCF Model with pytorch geometric framework
 
         Args:
@@ -129,9 +80,9 @@ class NGCF(nn.Module):
         super().__init__()
         emb_size = args.emb_size
         
-        self.gc1 = GCNConv(emb_size, emb_size)
-        self.gc2 = GCNConv(emb_size, emb_size) # ATTENTION on ajoute des self loops dans les couches de convolutions.
-        self.gc3 = GCNConv(emb_size, emb_size)
+        self.gc1 = NGCF_Layer(emb_size, emb_size,bias=False)
+        self.gc2 = NGCF_Layer(emb_size, emb_size,bias=False) # ATTENTION on ajoute des self loops dans les couches de convolutions.
+        self.gc3 = NGCF_Layer(emb_size, emb_size,bias=False)
         self.dropout = nn.Dropout(p=0.1,inplace=False)
         self.l_relu = nn.LeakyReLU(inplace=False,negative_slope=args.negative_slope)
         if args.pretrain:
@@ -203,12 +154,16 @@ class NGCF(nn.Module):
             ef = torch.cat(emb_tuple,1)
             
         if self.pool =='mean':
-            ef = torch.mean(torch.stack(emb_tuple),dim=0,keepdim=True)
+            ef = emb_tuple[0]
+            for e in emb_tuple[1:]:
+                ef = ef + e 
+                
+            return 1/len(emb_tuple) * ef # Simple mean, could add some attention factor 
             
         elif self.pool =='sum':
             ef = emb_tuple[0]
             for e in emb_tuple[1:]:
-                ef += e 
+                ef = ef + e 
         return ef
     
     def compute_score(self,n_users):

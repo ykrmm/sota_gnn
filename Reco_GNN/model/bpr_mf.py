@@ -5,9 +5,8 @@ import torch
 
 class BPR_MF(nn.Module):
     def __init__(self,N,args,device) -> None:
-        super().__init__(BPR_MF,self)
-        
-        self.E = nn.Parameter(xavier_normal_(torch.rand((N,args.emb_size),requires_grad=True)))
+        super().__init__()
+        self.ef = nn.Parameter(xavier_normal_(torch.rand((N,args.emb_size),requires_grad=True)))
         self.device = device
 
     def forward(self,batch):
@@ -32,9 +31,9 @@ class BPR_MF(nn.Module):
         pos = pos.to(self.device)
         neg = neg.to(self.device)
         
-        users_emb = self.E[users]
-        pos_emb = self.E[pos]
-        neg_emb = self.E[neg]
+        users_emb = self.ef[users]
+        pos_emb = self.ef[pos]
+        neg_emb = self.ef[neg]
         
         pos_sim = (users_emb * pos_emb).sum(dim=-1) # Compute batch of similarity between users and positive items
         neg_sim = (users_emb * neg_emb).sum(dim=-1) # Compute batch of similarity between users and negative items
@@ -51,8 +50,8 @@ class BPR_MF(nn.Module):
         return the similarity scores between each users and items of size N*M
         Use for test
         """
-        users = self.E[:n_users] # N first lines of the embeddings matrix are for the users
-        items = self.E[n_users:] # The others are for the items
+        users = self.ef[:n_users] # N first lines of the embeddings matrix are for the users
+        items = self.ef[n_users:] # The others are for the items
         scores = users @ items.T # Inner product between all users and items
         return scores
 

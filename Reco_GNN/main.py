@@ -5,7 +5,7 @@ import torch
 from argparse import ArgumentParser
 from torch.utils.tensorboard import SummaryWriter
 from prettytable import PrettyTable
-from model import LightGCN_pyg,NGCF,BPR_MF
+from model import LightGCN,NGCF,BPR_MF
 from utils import str2bool,Gowalla
 from engine import train_one_epoch,eval_model
 from time import time
@@ -29,7 +29,7 @@ def main():
     parser.add_argument('--moment', type=float, default=0.9)
     parser.add_argument('--batch_size', default=1000, type=int)
     parser.add_argument('--epoch', default=100, type=int)
-    parser.add_argument('--n_neg', default=1, type=int,default="Number of negative example")
+    parser.add_argument('--n_neg', default=1, type=int,help="Number of negative example")
     parser.add_argument('--shuffle', default=False, type=str2bool,help="Shuffle the edge index")
     parser.add_argument('--pretrain', default=False, type=str2bool,help="Use pretrain embeddings with MF")
     parser.add_argument('--negative_slope', type=float, default=0.01)
@@ -70,7 +70,7 @@ def main():
         model = NGCF(dataset_train.data.num_nodes,args,device=device)
         
     elif args.model.upper() == 'LGCN':
-        model = LightGCN_pyg(dataset_train.data.num_nodes,args,device=device)
+        model = LightGCN(dataset_train.data.num_nodes,args,device=device)
         
         
     elif args.model.upper() == 'MF':
@@ -80,7 +80,26 @@ def main():
         raise ValueError("Model must be 'NGCF' or 'LGC'")
 
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.wd)
+    
+    # Optimizer 
+    
+    # Regularisation only on the embeddings matrix 
+    decay = dict()
+    no_decay = dict()
+    for name, m in model.named_parameters():
+        print('checking {}'.format(name))
+        if 'E' in name:
+            decay[name] = m 
+        else:
+            no_decay[name] = m 
+    
+    
+    optimizer = torch.optim.Adam(
+    [
+        {"params": no_decay, "lr": args.learning_rate, "weight_decay": 0},
+        {"params": decay, "lr": args.learning_rate, "weight_decay": args.wd},
+    ],
+    )
                     
             
             
@@ -132,7 +151,7 @@ def main():
     writer.add_hparams(
     {"lr": args.learning_rate, "batch_size": args.batch_size, "shuffle":args.shuffle,\
         "wd":args.wd,"pool":args.pool,"emb_size":args.emb_size,"pretrain":args.pretrain,\
-            "negative_slope":args.negative_slope,"n_neg":args.n_neg},
+            "negative_slope":args.negative_slope,"n_neg":args.n_neg,"model":args.model},
     {
         "Ndcg": ndcg_max,
         "Recall": recall_max,
@@ -143,7 +162,7 @@ def main():
     
     if args.model.upper() == 'MF':
         print('Saving pretrain embeddings...')
-        torch.save(model.E,'embeddings/pretrain_emb.pt')
+        torch.save(model.ef,'embeddings/pretrain_emb.pt')
         print('Embeddings matrix successfully save')
         
     if args.save_path is not None:

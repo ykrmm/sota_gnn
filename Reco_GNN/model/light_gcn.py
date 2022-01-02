@@ -1,101 +1,126 @@
 import torch
 import torch.nn as nn 
 import numpy as np 
-
+from operator import itemgetter
 from torch.nn.parameter import Parameter
 from torch.nn.modules.module import Module
 from torch.nn.init import xavier_uniform_,xavier_normal_
 import torch.nn.functional as F
 #Pytorch Geometric
-from torch_geometric.nn import MessagePassing
+from torch_geometric.nn import MessagePassing, LGConv
 from torch_geometric.utils import add_self_loops, degree
+from torch_geometric.utils import to_undirected
 
 
-
-
-
-
-
-class Light_GCN_Layer(MessagePassing):
-    def __init__(self, in_channels, out_channels,aggr='add'):
-        super().__init__(aggr=aggr)  # "Add" aggregation (Step 5).
-        self.lin = torch.nn.Linear(in_channels, out_channels)
-
-    def forward(self, x, edge_index):
-        # x has shape [N, in_channels]
-        # edge_index has shape [2, E]
-
-        
-        # Compute normalization
-        row, col = edge_index
-        deg = degree(col, x.size(0), dtype=x.dtype)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
-        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
-
-        # Start propagating messages.
-        return self.propagate(edge_index, x=x, norm=norm)
-
-    def message(self, x_j, norm):
-        # x_j has shape [E, out_channels]
-
-        # Step 4: Normalize node features.
-        return norm.view(-1, 1) * x_j
-
-
-
-class LightGCN_pyg(nn.Module):
-    def __init__(self,N,emb_size=64,layer=3,aggr='add') -> None:
+    
+class LightGCN(nn.Module):
+    def __init__(self,N,args,device='cpu') -> None:
         """NGCF Model with pytorch geometric framework
 
         Args:
-            N ([int]): Number of nodes in bipartite graph
-            emb_size (int, optional): Size of the embeddings. Defaults to 64.
-            layer (int, optional): Number of GCN Layer in the model. Defaults to 3.
+            N ([int]): Number of nodes in bipartite graph ( Warning it's # users + items ! )
+            args:
+            - emb_size (int, optional): Size of the embeddings. Defaults to 64.
+            - aggr (str,optional): Aggregation function in convolution layer. 'add' 'mean' or 'max'
+            - pool (str,optional): Pooling mode for final representation. 'concat' 'mean' or 'sum'
+            - negative_slope (float): negative slope for the leakyRelu
+            - pretrain (bool): Use the pretrain embeddings matrix
+            
         """
         super().__init__()
-        self.gc1 = Light_GCN_Layer(emb_size, emb_size,aggr=aggr)
-        self.gc2 = Light_GCN_Layer(emb_size, emb_size,aggr=aggr)
-        self.gc3 = Light_GCN_Layer(emb_size, emb_size,aggr=aggr)
-        self.dropout = nn.Dropout(p=0.1)
-        self.l_relu = nn.LeakyReLU()
-        self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
+        emb_size = args.emb_size
+        
+        self.gc1 = LGConv(normalize=True)
+        self.gc2 = LGConv(normalize=True) # ATTENTION on ajoute des self loops dans les couches de convolutions.
+        self.gc3 = LGConv(normalize=True)
+        if args.pretrain:
+            try:
+                self.E = torch.load('embeddings/pretrain_emb.pt')
+                print('sucess to load pretrain embeddings')
+            except : 
+                print('no pretrain embeddings found')
+                raise NameError('Didnt find the pretrain embeddings')
+                
+        else:
+            self.E = nn.Parameter(xavier_normal_(torch.rand((N,emb_size),requires_grad=True)))
+        self.device = device
+        self.pool = args.pool
     
-    def forward(self,edge_index):
-        
-        
-        self.E1 = self.l_relu(self.gc1(self.E,edge_index))
-        self.E1 = F.normalize(self.E1, p=2, dim=1)
-        self.E1 = self.dropout(self.E1)
-        self.E2 = self.l_relu(self.gc2(self.E1,edge_index))
-        self.E2 = F.normalize(self.E2, p=2, dim=1)
-        self.E2 = self.dropout(self.E2)
-        self.E3 = self.l_relu(self.gc3(self.E2,edge_index))
-        self.E3 = F.normalize(self.E3, p=2, dim=1)
-        
-        EF = self.fusion()
-        return EF
+    def forward(self,batch):
+        """Generate embeddings for a batch of users and items.
 
-
-
-    def fusion(self):
+        Args:
+            batch (tuple(torch.LongTensor)): Sample batch of users, positive and negative items
+            batch[0] --> users 
+            batch[1] --> pos items 
+            batch[2] --> neg items sampled 
+            
+            Careful the sample are directed graph from users to items, make it indirect by using 'to_undirect' function 
+            from pyg. 
+            
+            Return (Positive similarity, negative similarity) 
+            
         """
-        Concatenate all the embeddings for the final representations
-        """
-        a0 = a1 = a2 = a3 = 1/ (self.layer+1) # Can be learned
+        users,pos,neg = batch
         
-        EF = (a0* self.E) + (a1* self.E1) + (a2 * self.E2) + (a3 * self.E3)
+        users = users.to(self.device)
+        pos = pos.to(self.device)
+        neg = neg.to(self.device)
         
-        return EF
+        edge_index_direct = torch.stack((users,pos)) # Real connections in graph
+        
+        edge_index = to_undirected(edge_index_direct).to(self.device) # Propagate msg for users AND items 
+        
+        e1 = self.gc1(self.E,edge_index)
 
-    def compute_score(self,N):
+        e2 = self.gc2(e1,edge_index)
+
+        e3 = self.gc3(e2,edge_index)
+        
+        self.ef = self._pooling((self.E,e1,e2,e3)) # Final representation is the concatenation of rpz of all layers
+        
+        users_emb = self.ef[users]
+        pos_emb = self.ef[pos]
+        neg_emb = self.ef[neg]
+        
+        pos_sim = (users_emb * pos_emb).sum(dim=-1) # Compute batch of similarity between users and positive items
+        neg_sim = (users_emb * neg_emb).sum(dim=-1) # Compute batch of similarity between users and negative items
+        
+        return pos_sim,neg_sim
+        
+        
+    def _pooling(self,emb_tuple):
+        """
+
+            Pooling of representations at each layers with mode
+            mode (str): 'concat', 'sum' or 'mean'
+        """
+        if self.pool =='concat':
+            ef = torch.cat(emb_tuple,1)
+            
+        if self.pool =='mean':
+            ef = emb_tuple[0]
+            
+            return torch.mean(torch.stack((emb_tuple)),dim=0,keepdim=True)
+            
+            
+        elif self.pool =='sum':
+            ef = emb_tuple[0]
+            for e in emb_tuple[1:]:
+                ef = ef + e 
+        return ef
+    
+    def compute_score(self,n_users):
         """
 
         Args:
-            N ([type]): Number of users
+            n_users ([type]): Number of users
             
+        return the similarity scores between each users and items of size N*M
+        Use for test
         """
-        users = self.EF[:N] # N first lines of the embeddings matrix are for the users
-        items = self.EF[N:] # The others are for the items
+        users = self.ef[:n_users] # N first lines of the embeddings matrix are for the users
+        items = self.ef[n_users:] # The others are for the items
         scores = users @ items.T # Inner product between all users and items
         return scores
+        
