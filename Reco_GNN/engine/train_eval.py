@@ -7,7 +7,7 @@ from .metric import compute_metrics
 from .utils_engine import batch
 from .sampling import structured_bipartite_negative_sampling
 
-def train_one_epoch(model,optimizer,dataset,batch_size):
+def train_one_epoch(model,optimizer,dataset,batch_size,lamb):
     """Compute one epoch of model training
 
     Args:
@@ -34,7 +34,15 @@ def train_one_epoch(model,optimizer,dataset,batch_size):
         
         pos_sim,neg_sim = model(b)
         
-        loss = - (pos_sim - neg_sim).sigmoid().log().mean() 
+        bpr = - (pos_sim - neg_sim).sigmoid().log().mean() 
+        
+        user_emb0 = model.E[sample[0]]
+        pos_emb0 = model.E[sample[1]]
+        neg_emb0 = model.E[sample[2]]
+
+        reg = (1/2)*(user_emb0.norm(2).pow(2) + 
+                         pos_emb0.norm(2).pow(2)  +
+                         neg_emb0.norm(2).pow(2))/float(batch_size)
             
         """+ lamb*(torch.norm(model.E,p=2) + \
             torch.norm(model.gc1.lin.weight,p=2)\
@@ -44,6 +52,7 @@ def train_one_epoch(model,optimizer,dataset,batch_size):
         """except:
             loss = - (pos_sim - neg_sim).sigmoid().log().mean() + lamb*(torch.norm(model.E,p=2)) # BPR Loss for LightGCN"""
         #print(loss)
+        loss = bpr + lamb*reg
         loss_list.append(loss.item())
         loss.backward()
         optimizer.step()

@@ -99,7 +99,7 @@ class LightGCN(nn.Module):
             ef = torch.cat(emb_tuple,1)
             
         if self.pool =='mean':
-            ef = emb_tuple[0]
+
             
             return torch.mean(torch.stack((emb_tuple)),dim=0,keepdim=True)
             
